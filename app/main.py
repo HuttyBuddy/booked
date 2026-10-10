@@ -12,6 +12,21 @@ from app import paypal, store
 app = FastAPI(title="Booked")
 store.init()
 
+# PayPal Smart Buttons (client-side checkout) needs only the public client ID.
+# Server-side REST (paypal.py) remains the production path when the secret is set.
+def _load_env():
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "..", ".env")) as f:
+            for line in f:
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.strip().split("=", 1)
+                    os.environ.setdefault(k, v)
+    except FileNotFoundError:
+        pass
+
+_load_env()
+PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_SANDBOX_CLIENT_ID", "")
+
 NEBIUS_BASE = "https://api.tokenfactory.nebius.com/v1"
 MODEL = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"
 
@@ -83,24 +98,36 @@ async def chat(inp: ChatIn, request: Request):
     system = SYSTEM_PROMPT.format(**b)
     reply = await agent_reply(system, inp.history, inp.message)
 
-    # Closer: agent signals readiness with [DEPOSIT] -> create booking + PayPal order
+    # Closer: agent signals readiness with [DEPOSIT] -> create booking + PayPal button
     if "[DEPOSIT]" in reply:
         reply = reply.replace("[DEPOSIT]", "").strip()
         booking_id = store.new_booking(conv_id, b["deposit_usd"])
-        base = str(request.base_url).rstrip("/")
-        order = await paypal.create_deposit_order(
-            b["deposit_usd"],
-            f"{b['business_name']} estimate deposit",
-            return_url=f"{base}/pay/return?booking_id={booking_id}",
-            cancel_url=f"{base}/pay/cancel?booking_id={booking_id}",
-        )
-        store.update_booking(booking_id, paypal_order_id=order["order_id"],
-                             deposit_status="awaiting_payment")
-        tag = " (demo link — PayPal sandbox not connected)" if order["demo"] else ""
-        reply += (f"\n\nTo lock your slot, please place the {b['fee'].split(',')[0]} deposit here: "
-                  f"{order['approval_url']}{tag}")
+        store.update_booking(booking_id, deposit_status="awaiting_payment")
+        reply += (f"\n\nTo lock your slot, place the {b['fee'].split(',')[0]} deposit "
+                  f"with the PayPal button below.")
+        return {"reply": reply, "conv_id": conv_id,
+                "deposit_button": {"booking_id": booking_id,
+                                   "amount_usd": b["deposit_usd"],
+                                   "description": f"{b['business_name']} estimate deposit",
+                                   "paypal_client_id": PAYPAL_CLIENT_ID}}
     store.add_message(conv_id, "assistant", reply)
     return {"reply": reply, "conv_id": conv_id}
+
+
+class DepositConfirmedIn(BaseModel):
+    booking_id: int
+    paypal_order_id: str = ""
+
+
+@app.post("/api/deposit-confirmed")
+async def deposit_confirmed(inp: DepositConfirmedIn):
+    """Called by the browser after the PayPal Smart Button captures payment."""
+    booking = store.get_booking(inp.booking_id)
+    if not booking:
+        return {"ok": False}
+    store.update_booking(inp.booking_id, deposit_status="paid",
+                         paypal_order_id=inp.paypal_order_id or booking["paypal_order_id"])
+    return {"ok": True}
 
 
 @app.get("/pay/return")
@@ -154,7 +181,7 @@ td,th{{border:1px solid #ddd;padding:8px;text-align:left;font-size:14px}}
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return """<!DOCTYPE html><html><head><meta charset="utf-8">
+    html = """<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Booked — demo</title>
 <style>body{font-family:system-ui,sans-serif;max-width:560px;margin:40px auto;padding:0 16px}
@@ -166,16 +193,34 @@ button{padding:10px 18px;border-radius:8px;border:0;background:#0b5fff;color:#ff
 <h2>Booked — homeowner chat demo</h2>
 <div id="log"><div class="msg a">Hi! This is Apex Heating & Air's assistant. What can I help with?</div></div>
 <form id="f"><input id="t" autocomplete="off" placeholder="e.g. My AC died, house is 90 degrees"><button>Send</button></form>
+<script src="https://www.paypal.com/sdk/js?client-id=__PAYPAL_CLIENT_ID__&currency=USD&intent=capture"></script>
 <script>
 const log=document.getElementById('log'),hist=[];let convId=null;
+function renderPayPalButton(cfg){
+ const wrap=document.createElement('div');wrap.className='msg a';wrap.id='pp-'+cfg.booking_id;
+ log.appendChild(wrap);
+ paypal.Buttons({
+  createOrder:(data,actions)=>actions.order.create({purchase_units:[{
+   amount:{value:cfg.amount_usd},description:cfg.description}]}),
+  onApprove:(data,actions)=>actions.order.capture().then(details=>
+   fetch('/api/deposit-confirmed',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({booking_id:cfg.booking_id,paypal_order_id:data.orderID})})
+   .then(()=>{wrap.innerHTML='Deposit received — your estimate is locked in. We\'ll see you soon!';})),
+  onCancel:()=>{wrap.innerHTML='Deposit cancelled — no charge made.';}
+ }).render(wrap);
+ log.scrollTop=log.scrollHeight;
+}
 document.getElementById('f').onsubmit=async e=>{
  e.preventDefault();const t=document.getElementById('t');const m=t.value.trim();if(!m)return;t.value='';
  log.innerHTML+=`<div class="msg u">${m}</div>`;hist.push({role:'user',content:m});
  const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify({message:m,history:hist.slice(0,-1),conv_id:convId})});
  const d=await r.json();convId=d.conv_id;hist.push({role:'assistant',content:d.reply});
- log.innerHTML+=`<div class="msg a">${d.reply}</div>`;log.scrollTop=log.scrollHeight;
+ log.innerHTML+=`<div class="msg a">${d.reply}</div>`;
+ if(d.deposit_button) renderPayPalButton(d.deposit_button);
+ log.scrollTop=log.scrollHeight;
 };
 </script>
 <p><a href="/dashboard">Owner dashboard</a></p>
 </body></html>"""
+    return HTMLResponse(html.replace("__PAYPAL_CLIENT_ID__", PAYPAL_CLIENT_ID))
