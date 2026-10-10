@@ -11,11 +11,14 @@ Triple-hackathon entry:
 
 ```bash
 pip install -r requirements.txt
-export NEBIUS_API_KEY=...   # Token Factory key
+export NEBIUS_API_KEY=...            # Token Factory key
+export PAYPAL_CLIENT_ID=...         # sandbox, optional — demo mode without
+export PAYPAL_CLIENT_SECRET=...     # sandbox, optional
 uvicorn app.main:app --reload
 ```
 
 Open http://localhost:8000 — the chat widget demos the homeowner conversation.
+Open http://localhost:8000/dashboard — the owner view: bookings, deposit status, conversations.
 
 ## Architecture
 
