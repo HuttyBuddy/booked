@@ -9,7 +9,9 @@ An open-source AI sales agent for local service businesses. It answers inbound l
 
 ## Demo
 
-[Demo video (under 3 min)](https://www.youtube.com/) — *link added at publish time*
+- [Nebius × NVIDIA cut (84s)](https://www.youtube.com/watch?v=OClpsdGXRVk) — the infra story: Nemotron on Token Factory
+- [PayPal cut (75s)](https://www.youtube.com/watch?v=_8BLm5gxhrM) — the commerce story: real $89 deposit captured
+- [Code for a Billion cut (79s)](https://www.youtube.com/watch?v=ZiGmUL4lAJY) — the open-source story: fork it for any trade
 
 **The 60-second version:** a homeowner's AC dies at 9:47 PM. They message the business. Booked (powered by Nemotron on Nebius) greets them, asks three qualifying questions, and the moment it has a name, phone, and time preference, it drops a PayPal button into the chat. The homeowner pays the $89 deposit with a card — no account needed — and the owner sees the booking flip to `paid` on the dashboard. Missed call turned into booked revenue, while the owner sleeps.
 
