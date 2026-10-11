@@ -162,7 +162,7 @@ async def dashboard():
         for r in bookings)
     crows = "".join(
         f"<tr><td>{r['id']}</td><td>{r['business']}</td></tr>" for r in convs)
-    paypal_state = "LIVE (sandbox)" if paypal.configured() else "DEMO MODE — add PayPal sandbox credentials"
+    paypal_state = "LIVE (sandbox Smart Buttons)" if PAYPAL_CLIENT_ID else "DEMO MODE — add PayPal sandbox client ID"
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Booked — owner dashboard</title>
 <style>body{{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px}}
@@ -183,16 +183,26 @@ td,th{{border:1px solid #ddd;padding:8px;text-align:left;font-size:14px}}
 async def index():
     html = """<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Booked — demo</title>
-<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:40px auto;padding:0 16px}
-#log{border:1px solid #ddd;border-radius:12px;padding:16px;min-height:300px;margin-bottom:12px}
-.msg{margin:8px 0;line-height:1.5;white-space:pre-wrap}.u{text-align:right;color:#0b5fff}.a{color:#111}
-form{display:flex;gap:8px}input{flex:1;padding:10px;border-radius:8px;border:1px solid #ccc}
-button{padding:10px 18px;border-radius:8px;border:0;background:#0b5fff;color:#fff;font-weight:700}</style>
+<title>Booked — Apex Heating & Air</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:0;background:#f4f6f8;min-height:100vh}
+header{background:#0b2545;color:#fff;padding:18px 20px}
+header h2{margin:0;font-size:18px}header p{margin:4px 0 0;font-size:13px;opacity:.75}
+#log{padding:20px 16px;min-height:380px}
+.msg{max-width:80%;margin:10px 0;padding:12px 16px;border-radius:18px;line-height:1.55;font-size:15px;white-space:pre-wrap}
+.a{background:#fff;color:#111;border-bottom-left-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.u{background:#0b5fff;color:#fff;margin-left:auto;border-bottom-right-radius:6px}
+.typing{color:#888;font-style:italic;font-size:14px;padding:4px 16px}
+form{display:flex;gap:8px;padding:12px 16px;background:#fff;border-top:1px solid #e2e6ea;position:sticky;bottom:0}
+input{flex:1;padding:12px;border-radius:24px;border:1px solid #d0d7de;font-size:15px}
+button{padding:12px 22px;border-radius:24px;border:0;background:#0b5fff;color:#fff;font-weight:700;font-size:15px;cursor:pointer}
+.foot{text-align:center;padding:14px;font-size:13px;color:#888}.foot a{color:#0b5fff}
+</style>
 </head><body>
-<h2>Booked — homeowner chat demo</h2>
-<div id="log"><div class="msg a">Hi! This is Apex Heating & Air's assistant. What can I help with?</div></div>
-<form id="f"><input id="t" autocomplete="off" placeholder="e.g. My AC died, house is 90 degrees"><button>Send</button></form>
+<header><h2>Apex Heating &amp; Air</h2><p>Typically replies instantly · Powered by Booked</p></header>
+<div id="log"><div class="msg a">Hi! This is Apex Heating &amp; Air's assistant. What can I help with tonight?</div></div>
+<form id="f"><input id="t" autocomplete="off" placeholder="Type your message..."><button>Send</button></form>
 <script src="https://www.paypal.com/sdk/js?client-id=__PAYPAL_CLIENT_ID__&currency=USD&intent=capture"></script>
 <script>
 const log=document.getElementById('log'),hist=[];let convId=null;
@@ -205,7 +215,7 @@ function renderPayPalButton(cfg){
   onApprove:(data,actions)=>actions.order.capture().then(details=>
    fetch('/api/deposit-confirmed',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({booking_id:cfg.booking_id,paypal_order_id:data.orderID})})
-   .then(()=>{wrap.innerHTML='Deposit received — your estimate is locked in. We\'ll see you soon!';})),
+   .then(()=>{wrap.innerHTML='Deposit received - your estimate is locked in. We will see you soon!';})),
   onCancel:()=>{wrap.innerHTML='Deposit cancelled — no charge made.';}
  }).render(wrap);
  log.scrollTop=log.scrollHeight;
@@ -213,14 +223,17 @@ function renderPayPalButton(cfg){
 document.getElementById('f').onsubmit=async e=>{
  e.preventDefault();const t=document.getElementById('t');const m=t.value.trim();if(!m)return;t.value='';
  log.innerHTML+=`<div class="msg u">${m}</div>`;hist.push({role:'user',content:m});
+ const ty=document.createElement('div');ty.className='typing';ty.id='ty';ty.textContent='Typing...';
+ log.appendChild(ty);log.scrollTop=log.scrollHeight;
  const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify({message:m,history:hist.slice(0,-1),conv_id:convId})});
  const d=await r.json();convId=d.conv_id;hist.push({role:'assistant',content:d.reply});
+ document.getElementById('ty').remove();
  log.innerHTML+=`<div class="msg a">${d.reply}</div>`;
  if(d.deposit_button) renderPayPalButton(d.deposit_button);
  log.scrollTop=log.scrollHeight;
 };
 </script>
-<p><a href="/dashboard">Owner dashboard</a></p>
+<div class="foot"><a href="/dashboard">Owner dashboard</a></div>
 </body></html>"""
     return HTMLResponse(html.replace("__PAYPAL_CLIENT_ID__", PAYPAL_CLIENT_ID))
