@@ -72,10 +72,15 @@ def recent_conversations(limit: int = 20):
             "SELECT * FROM conversations ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
 
 
+def set_summary(conv_id: int, summary: str):
+    with _lock, _conn() as c:
+        c.execute("UPDATE conversations SET summary=? WHERE id=?", (summary, conv_id))
+
+
 def recent_bookings(limit: int = 20):
     with _lock, _conn() as c:
         return c.execute(
-            """SELECT b.*, conv.business FROM bookings b
+            """SELECT b.*, conv.business, conv.summary FROM bookings b
                JOIN conversations conv ON conv.id=b.conv_id
                ORDER BY b.created_at DESC LIMIT ?""", (limit,)).fetchall()
 
