@@ -90,6 +90,29 @@ async def agent_reply(system: str, history: list[dict], message: str) -> str:
     return data["choices"][0]["message"]["content"] or "(no reply — try again)"
 
 
+def extract_lead(user_texts):
+    """Pull the caller's name, phone, time preference, and need out of their messages."""
+    blob = "\n".join(user_texts)
+    name = ""
+    m = re.search(r"(?:I'?m|my name is|this is)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", blob)
+    if m:
+        name = m.group(1)
+    phone = ""
+    m = re.search(r"(\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4})", blob)
+    if m:
+        phone = m.group(1)
+    slot = ""
+    m = re.search(r"((?:tomorrow|today|tonight)(?:\s+(?:morning|afternoon|evening))?|"
+                  r"next\s+(?:week|month)|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+                  r"(?:\s+(?:morning|afternoon|evening))?)", blob, re.I)
+    if not m:
+        m = re.search(r"(ASAP|as soon as possible)", blob, re.I)
+    if m:
+        slot = m.group(1).strip()
+    need = user_texts[0].strip() if user_texts else ""
+    return name, phone, slot, need
+
+
 @app.post("/api/chat")
 async def chat(inp: ChatIn, request: Request):
     b = BUSINESSES.get(inp.business, BUSINESSES["apex-hvac"])
@@ -102,7 +125,13 @@ async def chat(inp: ChatIn, request: Request):
     if "[DEPOSIT]" in reply:
         reply = reply.replace("[DEPOSIT]", "").strip()
         booking_id = store.new_booking(conv_id, b["deposit_usd"])
-        store.update_booking(booking_id, deposit_status="awaiting_payment")
+        user_texts = [h.get("content", "") for h in inp.history if h.get("role") == "user"]
+        user_texts.append(inp.message)
+        name, phone, slot, need = extract_lead(user_texts)
+        store.update_booking(booking_id, deposit_status="awaiting_payment",
+                             customer_name=name, customer_phone=phone, slot=slot)
+        if need:
+            store.set_summary(conv_id, need)
         reply += (f"\n\nTo lock your slot, place the {b['fee'].split(',')[0]} deposit "
                   f"with the PayPal button below.")
         return {"reply": reply, "conv_id": conv_id,
@@ -156,26 +185,39 @@ async def pay_cancel(booking_id: int):
 async def dashboard():
     bookings = store.recent_bookings()
     convs = store.recent_conversations()
+
+    def esc(s):
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;")
+
     rows = "".join(
-        f"<tr><td>{r['id']}</td><td>{r['business']}</td><td>${r['amount_usd']}</td>"
+        f"<tr><td>{r['id']}</td><td><b>{esc(r['customer_name']) or '—'}</b></td>"
+        f"<td>{esc(r['customer_phone']) or '—'}</td><td>{esc(r['summary'])[:70] or '—'}</td>"
+        f"<td>{esc(r['slot']) or '—'}</td><td>${r['amount_usd']}</td>"
         f"<td>{r['deposit_status']}</td><td>{r['paypal_order_id'][:18]}</td></tr>"
         for r in bookings)
-    crows = "".join(
-        f"<tr><td>{r['id']}</td><td>{r['business']}</td></tr>" for r in convs)
+
+    def conv_row(r):
+        msgs = store.conversation_messages(r["id"])
+        user_texts = [m["content"] for m in msgs if m["role"] == "user"]
+        name, phone, _slot, need = extract_lead(user_texts)
+        return (f"<tr><td>{r['id']}</td><td><b>{esc(name) or '—'}</b></td>"
+                f"<td>{esc(phone) or '—'}</td><td>{esc(need)[:70] or esc(r['summary'])[:70] or '—'}</td></tr>")
+
+    crows = "".join(conv_row(r) for r in convs)
     paypal_state = "LIVE (sandbox Smart Buttons)" if PAYPAL_CLIENT_ID else "DEMO MODE — add PayPal sandbox client ID"
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Booked — owner dashboard</title>
-<style>body{{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px}}
-table{{border-collapse:collapse;width:100%;margin-bottom:32px}}
-td,th{{border:1px solid #ddd;padding:8px;text-align:left;font-size:14px}}
+<style>body{{font-family:system-ui,sans-serif;max-width:940px;margin:36px auto;padding:0 16px}}
+table{{border-collapse:collapse;width:100%;margin-bottom:30px}}
+td,th{{border:1px solid #ddd;padding:7px 8px;text-align:left;font-size:13.5px}}
 .badge{{display:inline-block;background:#eee;border-radius:6px;padding:2px 10px;font-size:13px}}</style>
 </head><body>
 <h2>Booked — owner dashboard</h2>
 <p>PayPal: <span class="badge">{paypal_state}</span></p>
-<h3>Bookings & deposits</h3>
-<table><tr><th>#</th><th>Business</th><th>Deposit</th><th>Status</th><th>Order</th></tr>{rows or "<tr><td colspan=5>No bookings yet</td></tr>"}</table>
+<h3>Bookings &amp; deposits — who called</h3>
+<table><tr><th>#</th><th>Caller</th><th>Phone</th><th>Need</th><th>When</th><th>Deposit</th><th>Status</th><th>Order</th></tr>{rows or "<tr><td colspan=8>No bookings yet</td></tr>"}</table>
 <h3>Conversations</h3>
-<table><tr><th>#</th><th>Business</th></tr>{crows or "<tr><td colspan=2>None yet</td></tr>"}</table>
+<table><tr><th>#</th><th>Caller</th><th>Phone</th><th>Need</th></tr>{crows or "<tr><td colspan=4>None yet</td></tr>"}</table>
 </body></html>"""
 
 
